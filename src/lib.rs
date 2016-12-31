@@ -30,34 +30,37 @@ pub struct TypeMap<A: ? Sized = UnsafeAny, S = hash_map::RandomState>
     data: HashMap<TypeId, Box<A>, S>
 }
 
-impl<A: ? Sized> Clone for TypeMap<A>
-where A: UnsafeAnyExt, Box<A>: Clone {
+impl<A: ? Sized, S> Clone for TypeMap<A, S>
+where A: UnsafeAnyExt, Box<A>: Clone, S: BuildHasher + Clone {
     // We are a bit cleverer than derive.
-    fn clone(&self) -> TypeMap<A> {
+    fn clone(&self) -> TypeMap<A, S> {
         TypeMap { data: self.data.clone() }
     }
 }
 
+/// A version of `TypeMap` with default `A` type.
+pub type SimpleTypeMap<S = hash_map::RandomState> = TypeMap<UnsafeAny, S>;
+
 /// A version of `TypeMap` containing only `Send` types.
-pub type SendMap = TypeMap<UnsafeAny + Send>;
+pub type SendMap<S = hash_map::RandomState> = TypeMap<UnsafeAny + Send, S>;
 
 /// A version of `TypeMap` containing only `Sync` types.
-pub type SyncMap = TypeMap<UnsafeAny + Sync>;
+pub type SyncMap<S = hash_map::RandomState> = TypeMap<UnsafeAny + Sync, S>;
 
 /// A version of `TypeMap` containing only `Send + Sync` types.
-pub type ShareMap = TypeMap<UnsafeAny + Send + Sync>;
+pub type ShareMap<S = hash_map::RandomState> = TypeMap<UnsafeAny + Send + Sync, S>;
 
 /// A version of `TypeMap` containing only `Clone` types.
-pub type CloneMap = TypeMap<CloneAny>;
+pub type CloneMap<S = hash_map::RandomState> = TypeMap<CloneAny, S>;
 
 /// A version of `TypeMap` containing only `Clone + Send + Sync` types.
-pub type ShareCloneMap = TypeMap<CloneAny + Send + Sync>;
+pub type ShareCloneMap<S = hash_map::RandomState> = TypeMap<CloneAny + Send + Sync, S>;
 
 /// A version of `TypeMap` containing only `Debug` types.
-pub type DebugMap = TypeMap<DebugAny>;
+pub type DebugMap<S = hash_map::RandomState> = TypeMap<DebugAny, S>;
 
 /// A version of `TypeMap` containing only `Debug + Send + Sync` types.
-pub type ShareDebugMap = TypeMap<DebugAny + Send + Sync>;
+pub type ShareDebugMap<S = hash_map::RandomState> = TypeMap<DebugAny + Send + Sync, S>;
 
 // Assert some properties on SyncMap, SendMap and ShareMap.
 fn _assert_types() {
