@@ -7,6 +7,7 @@ extern crate unsafe_any as uany;
 use uany::{UnsafeAny, UnsafeAnyExt};
 use std::any::{Any, TypeId};
 use std::collections::{hash_map, HashMap};
+use std::hash::BuildHasher;
 use std::marker::PhantomData;
 
 use Entry::{Occupied, Vacant};
@@ -24,13 +25,14 @@ use internals::Implements;
 /// be stored in this map. Usually, you are looking for `ShareMap`, which
 /// is `Send + Sync`.
 #[derive(Default, Debug)]
-pub struct TypeMap<A: ?Sized = UnsafeAny>
-where A: UnsafeAnyExt {
-    data: HashMap<TypeId, Box<A>>
+pub struct TypeMap<A: ? Sized = UnsafeAny, S = hash_map::RandomState>
+    where A: UnsafeAnyExt, S: BuildHasher {
+    data: HashMap<TypeId, Box<A>, S>
 }
 
-impl<A: ?Sized> Clone for TypeMap<A>
-where A: UnsafeAnyExt, Box<A>: Clone { // We are a bit cleverer than derive.
+impl<A: ? Sized> Clone for TypeMap<A>
+where A: UnsafeAnyExt, Box<A>: Clone {
+    // We are a bit cleverer than derive.
     fn clone(&self) -> TypeMap<A> {
         TypeMap { data: self.data.clone() }
     }
@@ -61,10 +63,10 @@ pub type ShareDebugMap = TypeMap<DebugAny + Send + Sync>;
 fn _assert_types() {
     use std::fmt::Debug;
 
-    fn _assert_send<T: Send>() { }
-    fn _assert_sync<T: Sync>() { }
-    fn _assert_clone<T: Clone>() { }
-    fn _assert_debug<T: Debug>() { }
+    fn _assert_send<T: Send>() {}
+    fn _assert_sync<T: Sync>() {}
+    fn _assert_clone<T: Clone>() {}
+    fn _assert_debug<T: Debug>() {}
 
     _assert_send::<SendMap>();
     _assert_sync::<SyncMap>();
@@ -89,20 +91,32 @@ impl TypeMap {
     }
 }
 
-impl<A: UnsafeAnyExt + ?Sized> TypeMap<A> {
+impl<A: UnsafeAnyExt + ? Sized, S: BuildHasher + Default> TypeMap<A, S> {
     /// Create a new, empty TypeMap.
     ///
     /// Can be used with any `A` parameter; `new` is specialized to get around
     /// the required type annotations when using this function.
-    pub fn custom() -> TypeMap<A> {
+    pub fn custom() -> TypeMap<A, S> {
         TypeMap {
-            data: HashMap::new()
+            data: HashMap::with_hasher(S::default())
+        }
+    }
+}
+
+impl<A: UnsafeAnyExt + ? Sized, S: BuildHasher> TypeMap<A, S> {
+    /// Create a new, empty TypeMap.
+    ///
+    /// Can be used with any `A` parameter; `new` is specialized to get around
+    /// the required type annotations when using this function.
+    pub fn with_hasher(hasher: S) -> TypeMap<A, S> {
+        TypeMap {
+            data: HashMap::with_hasher(hasher)
         }
     }
 
     /// Insert a value into the map with a specified key type.
     pub fn insert<K: Key>(&mut self, val: K::Value) -> Option<K::Value>
-    where K::Value: Any + Implements<A> {
+                          where K::Value: Any + Implements<A> {
         self.data.insert(TypeId::of::<K>(), val.into_object()).map(|v| unsafe {
             *v.downcast_unchecked::<K::Value>()
         })
@@ -110,7 +124,7 @@ impl<A: UnsafeAnyExt + ?Sized> TypeMap<A> {
 
     /// Find a value in the map and get a reference to it.
     pub fn get<K: Key>(&self) -> Option<&K::Value>
-    where K::Value: Any + Implements<A> {
+                       where K::Value: Any + Implements<A> {
         self.data.get(&TypeId::of::<K>()).map(|v| unsafe {
             v.downcast_ref_unchecked::<K::Value>()
         })
@@ -118,7 +132,7 @@ impl<A: UnsafeAnyExt + ?Sized> TypeMap<A> {
 
     /// Find a value in the map and get a mutable reference to it.
     pub fn get_mut<K: Key>(&mut self) -> Option<&mut K::Value>
-    where K::Value: Any + Implements<A> {
+                           where K::Value: Any + Implements<A> {
         self.data.get_mut(&TypeId::of::<K>()).map(|v| unsafe {
             v.downcast_mut_unchecked::<K::Value>()
         })
@@ -133,7 +147,7 @@ impl<A: UnsafeAnyExt + ?Sized> TypeMap<A> {
     ///
     /// Returns `true` if a value was removed.
     pub fn remove<K: Key>(&mut self) -> Option<K::Value>
-    where K::Value: Any + Implements<A> {
+                          where K::Value: Any + Implements<A> {
         self.data.remove(&TypeId::of::<K>()).map(|v| unsafe {
             *v.downcast_unchecked::<K::Value>()
         })
@@ -141,7 +155,7 @@ impl<A: UnsafeAnyExt + ?Sized> TypeMap<A> {
 
     /// Get the given key's corresponding entry in the map for in-place manipulation.
     pub fn entry<'a, K: Key>(&'a mut self) -> Entry<'a, K, A>
-    where K::Value: Any + Implements<A> {
+                             where K::Value: Any + Implements<A> {
         match self.data.entry(TypeId::of::<K>()) {
             hash_map::Entry::Occupied(e) => Occupied(OccupiedEntry { data: e, _marker: PhantomData }),
             hash_map::Entry::Vacant(e) => Vacant(VacantEntry { data: e, _marker: PhantomData })
@@ -149,12 +163,12 @@ impl<A: UnsafeAnyExt + ?Sized> TypeMap<A> {
     }
 
     /// Read the underlying HashMap
-    pub unsafe fn data(&self) -> &HashMap<TypeId, Box<A>> {
+    pub unsafe fn data(&self) -> &HashMap<TypeId, Box<A>, S> {
         &self.data
     }
 
     /// Get a mutable reference to the underlying HashMap
-    pub unsafe fn data_mut(&mut self) -> &mut HashMap<TypeId, Box<A>> {
+    pub unsafe fn data_mut(&mut self) -> &mut HashMap<TypeId, Box<A>, S> {
         &mut self.data
     }
 
@@ -175,18 +189,18 @@ impl<A: UnsafeAnyExt + ?Sized> TypeMap<A> {
 }
 
 /// A view onto an entry in a TypeMap.
-pub enum Entry<'a, K, A: ?Sized + UnsafeAnyExt + 'a = UnsafeAny> {
+pub enum Entry<'a, K, A: ? Sized + UnsafeAnyExt + 'a = UnsafeAny> {
     /// A view onto an occupied entry in a TypeMap.
     Occupied(OccupiedEntry<'a, K, A>),
     /// A view onto an unoccupied entry in a TypeMap.
     Vacant(VacantEntry<'a, K, A>)
 }
 
-impl<'a, K: Key, A: ?Sized + UnsafeAnyExt + 'a = UnsafeAny> Entry<'a, K, A> {
+impl<'a, K: Key, A: ? Sized + UnsafeAnyExt + 'a> Entry<'a, K, A> {
     /// Ensures a value is in the entry by inserting the default if empty, and returns
     /// a mutable reference to the value in the entry.
     pub fn or_insert(self, default: K::Value) -> &'a mut K::Value
-    where K::Value: Any + Implements<A> {
+                     where K::Value: Any + Implements<A> {
         match self {
             Entry::Occupied(inner) => inner.into_mut(),
             Entry::Vacant(inner) => inner.insert(default),
@@ -196,7 +210,7 @@ impl<'a, K: Key, A: ?Sized + UnsafeAnyExt + 'a = UnsafeAny> Entry<'a, K, A> {
     /// Ensures a value is in the entry by inserting the result of the default function if empty,
     /// and returns a mutable reference to the value in the entry.
     pub fn or_insert_with<F: FnOnce() -> K::Value>(self, default: F) -> &'a mut K::Value
-    where K::Value: Any + Implements<A> {
+                                                   where K::Value: Any + Implements<A> {
         match self {
             Entry::Occupied(inner) => inner.into_mut(),
             Entry::Vacant(inner) => inner.insert(default()),
@@ -205,21 +219,21 @@ impl<'a, K: Key, A: ?Sized + UnsafeAnyExt + 'a = UnsafeAny> Entry<'a, K, A> {
 }
 
 /// A view onto an occupied entry in a TypeMap.
-pub struct OccupiedEntry<'a, K, A: ?Sized + UnsafeAnyExt + 'a = UnsafeAny> {
+pub struct OccupiedEntry<'a, K, A: ? Sized + UnsafeAnyExt + 'a = UnsafeAny> {
     data: hash_map::OccupiedEntry<'a, TypeId, Box<A>>,
     _marker: PhantomData<K>
 }
 
 /// A view onto an unoccupied entry in a TypeMap.
-pub struct VacantEntry<'a, K, A: ?Sized + UnsafeAnyExt + 'a = UnsafeAny> {
+pub struct VacantEntry<'a, K, A: ? Sized + UnsafeAnyExt + 'a = UnsafeAny> {
     data: hash_map::VacantEntry<'a, TypeId, Box<A>>,
     _marker: PhantomData<K>
 }
 
-impl<'a, K: Key, A: UnsafeAnyExt + ?Sized> OccupiedEntry<'a, K, A> {
+impl<'a, K: Key, A: UnsafeAnyExt + ? Sized> OccupiedEntry<'a, K, A> {
     /// Get a reference to the entry's value.
     pub fn get(&self) -> &K::Value
-    where K::Value: Any + Implements<A> {
+               where K::Value: Any + Implements<A> {
         unsafe {
             self.data.get().downcast_ref_unchecked()
         }
@@ -227,7 +241,7 @@ impl<'a, K: Key, A: UnsafeAnyExt + ?Sized> OccupiedEntry<'a, K, A> {
 
     /// Get a mutable reference to the entry's value.
     pub fn get_mut(&mut self) -> &mut K::Value
-    where K::Value: Any + Implements<A> {
+                   where K::Value: Any + Implements<A> {
         unsafe {
             self.data.get_mut().downcast_mut_unchecked()
         }
@@ -235,7 +249,7 @@ impl<'a, K: Key, A: UnsafeAnyExt + ?Sized> OccupiedEntry<'a, K, A> {
 
     /// Transform the entry into a mutable reference with the same lifetime as the map.
     pub fn into_mut(self) -> &'a mut K::Value
-    where K::Value: Any + Implements<A> {
+                    where K::Value: Any + Implements<A> {
         unsafe {
             self.data.into_mut().downcast_mut_unchecked()
         }
@@ -243,7 +257,7 @@ impl<'a, K: Key, A: UnsafeAnyExt + ?Sized> OccupiedEntry<'a, K, A> {
 
     /// Set the entry's value and return the previous value.
     pub fn insert(&mut self, value: K::Value) -> K::Value
-    where K::Value: Any + Implements<A> {
+                  where K::Value: Any + Implements<A> {
         unsafe {
             *self.data.insert(value.into_object()).downcast_unchecked()
         }
@@ -251,17 +265,17 @@ impl<'a, K: Key, A: UnsafeAnyExt + ?Sized> OccupiedEntry<'a, K, A> {
 
     /// Move the entry's value out of the map, consuming the entry.
     pub fn remove(self) -> K::Value
-    where K::Value: Any + Implements<A> {
+                  where K::Value: Any + Implements<A> {
         unsafe {
             *self.data.remove().downcast_unchecked()
         }
     }
 }
 
-impl<'a, K: Key, A: ?Sized + UnsafeAnyExt> VacantEntry<'a, K, A> {
+impl<'a, K: Key, A: ? Sized + UnsafeAnyExt> VacantEntry<'a, K, A> {
     /// Set the entry's value and return a mutable reference to it.
     pub fn insert(self, value: K::Value) -> &'a mut K::Value
-    where K::Value: Any + Implements<A> {
+                  where K::Value: Any + Implements<A> {
         unsafe {
             self.data.insert(value.into_object()).downcast_mut_unchecked()
         }
@@ -283,14 +297,16 @@ mod test {
 
     impl Key for KeyType { type Value = Value; }
 
-    #[test] fn test_pairing() {
+    #[test]
+    fn test_pairing() {
         let mut map = TypeMap::new();
         map.insert::<KeyType>(Value(100));
         assert_eq!(*map.get::<KeyType>().unwrap(), Value(100));
         assert!(map.contains::<KeyType>());
     }
 
-    #[test] fn test_remove() {
+    #[test]
+    fn test_remove() {
         let mut map = TypeMap::new();
         map.insert::<KeyType>(Value(10));
         assert!(map.contains::<KeyType>());
@@ -298,7 +314,8 @@ mod test {
         assert!(!map.contains::<KeyType>());
     }
 
-    #[test] fn test_entry() {
+    #[test]
+    fn test_entry() {
         let mut map = TypeMap::new();
         map.insert::<KeyType>(Value(20));
         match map.entry::<KeyType>() {
@@ -318,7 +335,8 @@ mod test {
         assert!(map.contains::<KeyType>());
     }
 
-    #[test] fn test_entry_or_insert() {
+    #[test]
+    fn test_entry_or_insert() {
         let mut map = TypeMap::new();
         map.entry::<KeyType>().or_insert(Value(20)).0 += 1;
         assert_eq!(map.get::<KeyType>().unwrap(), &Value(21));
@@ -328,7 +346,8 @@ mod test {
         assert_eq!(map.get::<KeyType>().unwrap(), &Value(22));
     }
 
-    #[test] fn test_custom_bounds() {
+    #[test]
+    fn test_custom_bounds() {
         let mut map: SendMap = TypeMap::custom();
         map.insert::<KeyType>(Value(10));
         assert!(map.contains::<KeyType>());
@@ -336,7 +355,8 @@ mod test {
         assert!(!map.contains::<KeyType>());
     }
 
-    #[test] fn test_clonemap() {
+    #[test]
+    fn test_clonemap() {
         let mut map: CloneMap = TypeMap::custom();
         map.insert::<KeyType>(Value(10));
         assert!(map.contains::<KeyType>());
@@ -344,7 +364,8 @@ mod test {
         assert_eq!(map.get::<KeyType>(), cloned.get::<KeyType>());
     }
 
-    #[test] fn test_debugmap() {
+    #[test]
+    fn test_debugmap() {
         let mut map: DebugMap = TypeMap::custom();
         map.insert::<KeyType>(Value(10));
         assert!(map.contains::<KeyType>());
