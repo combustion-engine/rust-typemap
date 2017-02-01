@@ -16,4 +16,5 @@
 /examples/*
 !/examples/*.rs
 Cargo.lock
-
+.idea
+*.iml
